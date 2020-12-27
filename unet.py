@@ -4,6 +4,18 @@
 # Re-create the original U-Net architecture in PyTorch
 import torch
 import torch.nn as nn
+# For reading TIFF files / plotting
+import matplotlib.pyplot as plt
+# General packages
+import numpy as np
+
+
+TEST_IMAGE = 'images/t000.tif'
+
+
+def open_image(image_path):
+    image_mat = plt.imread(image_path)
+    return image_mat
 
 
 def double_conv(in_c, out_c):
@@ -109,8 +121,21 @@ class UNet(nn.Module):
 
 
 if __name__ == "__main__":
-    image = torch.rand(1, 1, 572, 572)
-    model = UNet()
-    print(model(image))
-
+    # Read the input image as numpy array
+    input_image = open_image(TEST_IMAGE)
+    # Convert the input image numpy array to PyTorch tensor
+    input_image = torch.from_numpy(input_image)
+    # Make the input image PyTorch tensor the correct shape
+    crop_image = input_image[None, None, :572, :572]
+    input_image = torch.zeros(1, 1, 572, 572)
+    input_image[:, :, :crop_image.shape[2], :crop_image.shape[3]] = crop_image
+    # image = torch.rand(1, 1, 572, 572)
+    output_model = UNet()(input_image)
+    output_image = output_model.cpu().detach().numpy()
+    input_image = input_image.cpu().detach().numpy()
+    plt.subplot(211)
+    plt.imshow(input_image[0,0,:,:])
+    plt.subplot(212)
+    plt.imshow(output_image[0,1,:,:])
+    plt.show()
 
