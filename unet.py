@@ -4,6 +4,7 @@
 # Re-create the original U-Net architecture in PyTorch
 import torch
 import torch.nn as nn
+import torchvision
 # For reading TIFF files / plotting
 import matplotlib.pyplot as plt
 # General packages
@@ -18,106 +19,73 @@ def open_image(image_path):
     return image_mat
 
 
-def double_conv(in_c, out_c):
-    conv = nn.Sequential(
-        nn.Conv2d(in_c, out_c, kernel_size=3),
-        nn.ReLU(inplace=True),
-        nn.Conv2d(out_c, out_c, kernel_size=3),
-        nn.ReLU(inplace=True)
-    )
-    return conv
+class Block(nn.Module):
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_ch, out_ch, 3)
+        self.relu = nn.ReLU()
+        self.conv2 = nn.Conv2d(out_ch, out_ch, 3)
+
+    def forward(self, x):
+        return self.conv2(self.relu(self.conv1(x)))
 
 
-def crop_tensor(tensor, target_tensor):
-    target_size = target_tensor.size()[2]
-    tensor_size = tensor.size()[2]
-    delta = tensor_size - target_size
-    delta = delta // 2
-    return tensor[:, :, delta:tensor_size-delta, delta:tensor_size-delta]
+class Encoder(nn.Module):
+    def __init__(self, channels=(1,64,128,256,512,1024)):
+        super().__init__()
+        self.encoder_blocks = nn.ModuleList([Block(channels[i], channels[i+1]) for i in range(len(channels)-1)])
+        self.pool = nn.MaxPool2d(2)
+
+    def forward(self, x):
+        filters = []
+        for block in self.encoder_blocks:
+            x = block(x)
+            filters.append(x)
+            x = self.pool(x)
+        return filters
+
+
+class Decoder(nn.Module):
+    def __init__(self, channels=(1024, 512, 256, 128, 64)):
+        super().__init__()
+        self.channels = channels
+        self.up_convs = nn.ModuleList([nn.ConvTranspose2d(channels[i], channels[i+1], 2, 2) for i in range(len(channels)-1)])
+        self.decoder_blocks = nn.ModuleList([Block(channels[i], channels[i+1]) for i in range(len(channels)-1)])
+
+    def forward(self, x, encoder_features):
+        for i in range(len(self.channels)-1):
+            x = self.up_convs[i](x)
+            encoder_filters = self.crop(encoder_features[i], x)
+            x = torch.cat([x, encoder_filters], dim=1)
+            x = self.decoder_blocks[i](x)
+        return x
+
+    def crop(self, encoder_filters, x):
+        _, _, H, W = x.shape
+        encoder_filters = torchvision.transforms.CenterCrop([H, W])(encoder_filters)
+        return encoder_filters
 
 
 class UNet(nn.Module):
-    def __init__(self):
-        super(UNet, self).__init__()
+    def __init__(self,
+                 encoder_channels=(1,64,128,256,512,1024),
+                 decoder_channels=(1024, 512, 256, 128, 64),
+                 num_class=1,
+                 retain_dim=False,
+                 output_size=(572,572)):
+        super().__init__()
+        self.encoder = Encoder(encoder_channels)
+        self.decoder = Decoder(decoder_channels)
+        self.head = nn.Conv2d(decoder_channels[-1], num_class, 1)
+        self.retain_dim = retain_dim
 
-        self.max_pool_2x2 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.down_conv_1 = double_conv(1, 64)
-        self.down_conv_2 = double_conv(64, 128)
-        self.down_conv_3 = double_conv(128, 256)
-        self.down_conv_4 = double_conv(256, 512)
-        self.down_conv_5 = double_conv(512, 1024)
-
-        self.up_trans_1 = nn.ConvTranspose2d(in_channels=1024,
-                                             out_channels=512,
-                                             kernel_size=2,
-                                             stride=2)
-
-        self.up_conv_1 = double_conv(1024, 512)
-
-        self.up_trans_2 = nn.ConvTranspose2d(in_channels=512,
-                                             out_channels=256,
-                                             kernel_size=2,
-                                             stride=2)
-
-        self.up_conv_2 = double_conv(512, 256)
-
-        self.up_trans_3 = nn.ConvTranspose2d(in_channels=256,
-                                             out_channels=128,
-                                             kernel_size=2,
-                                             stride=2)
-
-        self.up_conv_3 = double_conv(256, 128)
-
-        self.up_trans_4 = nn.ConvTranspose2d(in_channels=128,
-                                             out_channels=64,
-                                             kernel_size=2,
-                                             stride=2)
-
-        self.up_conv_4 = double_conv(128, 64)
-
-        self.out = nn.Conv2d(in_channels=64,
-                             out_channels=2,
-                             kernel_size=1,
-                             stride=1)
-
-    def forward(self, image):
-        # Encoder
-        # bs, c, h, w
-        # Layer 1
-        x1 = self.down_conv_1(image)
-        x2 = self.max_pool_2x2(x1)
-        # Layer 2
-        x3 = self.down_conv_2(x2)
-        x4 = self.max_pool_2x2(x3)
-        # Layer 3
-        x5 = self.down_conv_3(x4)
-        x6 = self.max_pool_2x2(x5)
-        # Layer 4
-        x7 = self.down_conv_4(x6)
-        x8 = self.max_pool_2x2(x7)
-        # Layer 5
-        x9 = self.down_conv_5(x8)
-
-        # Decoder
-        # Layer 4
-        x = self.up_trans_1(x9)
-        y = crop_tensor(x7, x)
-        x = self.up_conv_1(torch.cat([x, y], 1))
-        # Layer 3
-        x = self.up_trans_2(x)
-        y = crop_tensor(x5, x)
-        x = self.up_conv_2(torch.cat([x, y], 1))
-        # Layer 2
-        x = self.up_trans_3(x)
-        y = crop_tensor(x3, x)
-        x = self.up_conv_3(torch.cat([x, y], 1))
-        # Layer 1
-        x = self.up_trans_4(x)
-        y = crop_tensor(x1, x)
-        x = self.up_conv_4(torch.cat([x, y], 1))
-        # Final output
-        x = self.out(x)
-        return x
+    def forward(self, x):
+        encoder_filters = self.encoder(x)
+        out = self.decoder(encoder_filters[::-1][0], encoder_filters[::-1][1:])
+        out = self.head(out)
+        if self.retain_dim:
+            out = F.interpolate(out, output_size)
+        return out
 
 
 if __name__ == "__main__":
@@ -136,6 +104,6 @@ if __name__ == "__main__":
     plt.subplot(211)
     plt.imshow(input_image[0,0,:,:])
     plt.subplot(212)
-    plt.imshow(output_image[0,1,:,:])
+    plt.imshow(output_image[0,0,:,:])
     plt.show()
 
