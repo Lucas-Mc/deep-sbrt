@@ -1,3 +1,5 @@
 env/
 .DS_Store
 .vscode/
+HNSCC/data/
+NSCLC-Radiomics/data/
