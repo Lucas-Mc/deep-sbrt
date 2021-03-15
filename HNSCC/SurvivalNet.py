@@ -1,5 +1,11 @@
+import os
+import random
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
+import torch.optim as optim
 from torchsummary import summary
 
 
@@ -8,7 +14,7 @@ def conv_layer(in_channels, out_channels, kernel_size):
         nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size),
         nn.ReLU(inplace=True)
     )
-    return conv 
+    return conv
 
 def fc_layer(in_channels, out_channels):
     fc = nn.Sequential(
@@ -16,7 +22,10 @@ def fc_layer(in_channels, out_channels):
         nn.Linear(in_channels, out_channels),
         nn.ReLU(inplace=True)
     )
-    return fc 
+    return fc
+
+def dropout_layer():
+    return nn.Dropout(p=0.5, inplace=True)
 
 def single_fusion():
     fusion = nn.Sequential(
@@ -61,6 +70,7 @@ class SurvivalNet(nn.Module):
         self.down_conv_3 = conv_layer(32, 48, 3)
         self.down_conv_4 = conv_layer(48, 48, 3)
         self.fc_1 = fc_layer(48*6*6, 16)
+        self.dropout = dropout_layer()
         self.single_fusion = single_fusion()
 
     def forward(self, image):
@@ -73,10 +83,41 @@ class SurvivalNet(nn.Module):
         layer_7 = self.down_conv_4(layer_6)
         layer_8 = self.max_pool_2x2(layer_7)
         layer_9 = self.fc_1(layer_8)
-        layer_10 = self.single_fusion(layer_9)
+        layer_10 = self.dropout(layer_9)
+        layer_11 = self.single_fusion(layer_10)
 
 
 if __name__ == '__main__':
     image = torch.rand((1, 1, 128, 128))
     model = SurvivalNet()
-    summary(model, input_size=(1, 128, 128))
+    # summary(model, input_size=(1, 128, 128))
+    get_data()
+
+    # criterion = nn.CrossEntropyLoss()
+    # optimizer = optim.RMSprop(model.parameters())
+    # nn.init.kaiming_uniform_(w, mode='fan_in', nonlinearity='relu')
+
+    # trainloader = []
+    # for epoch in range(2):
+    #     running_loss = 0.0
+    #     for i, data in enumerate(trainloader, 0):
+    #         # get the inputs; data is a list of [inputs, labels]
+    #         inputs, labels = data
+
+    #         # zero the parameter gradients
+    #         optimizer.zero_grad()
+
+    #         # forward + backward + optimize
+    #         outputs = model(inputs)
+    #         loss = criterion(outputs, labels)
+    #         loss.backward()
+    #         optimizer.step()
+
+    #         # print statistics
+    #         running_loss += loss.item()
+    #         if i % 128 == 127:    # print every 128 mini-batches
+    #             print('[%d, %5d] loss: %.3f' %
+    #                 (epoch + 1, i + 1, running_loss / 128))
+    #             running_loss = 0.0
+
+    # print('Finished Training')
