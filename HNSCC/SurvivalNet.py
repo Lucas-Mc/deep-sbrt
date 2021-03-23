@@ -1,12 +1,17 @@
 import os
 import random
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchsummary import summary
+import torchvision
+from torch.utils.data import DataLoader
+
+from get_data import SurvivalDataset
 
 
 def conv_layer(in_channels, out_channels, kernel_size):
@@ -59,6 +64,13 @@ def mixed_fusion():
     )
     return fusion
 
+def weights_init(m):
+    if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+        w = m.weight.data
+        nn.init.kaiming_uniform_(w, mode='fan_in', nonlinearity='relu')
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
 
 class SurvivalNet(nn.Module):
     def __init__(self):
@@ -90,12 +102,17 @@ class SurvivalNet(nn.Module):
 if __name__ == '__main__':
     image = torch.rand((1, 1, 128, 128))
     model = SurvivalNet()
+    model.apply(weights_init)
     # summary(model, input_size=(1, 128, 128))
-    get_data()
+    dataset = SurvivalDataset()
+    data_loader = DataLoader(dataset=dataset, batch_size=4, shuffle=True, num_workers=2)
+    data_iter = iter(data_loader)
+    images, labels = data_iter.next()
+    plt.imshow(torchvision.utils.make_grid(images))
+    print(' '.join(str(l) for l in labels))
 
     # criterion = nn.CrossEntropyLoss()
     # optimizer = optim.RMSprop(model.parameters())
-    # nn.init.kaiming_uniform_(w, mode='fan_in', nonlinearity='relu')
 
     # trainloader = []
     # for epoch in range(2):
