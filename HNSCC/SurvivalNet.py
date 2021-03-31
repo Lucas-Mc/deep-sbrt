@@ -10,8 +10,9 @@ import torch.optim as optim
 from torchsummary import summary
 import torchvision
 from torch.utils.data import DataLoader
+from torch.utils.data.sampler import SubsetRandomSampler
 
-from get_data import SurvivalDataset
+from get_data import SurvivalDataset, Rescale, ToTensor
 
 
 def conv_layer(in_channels, out_channels, kernel_size):
@@ -25,7 +26,7 @@ def fc_layer(in_channels, out_channels):
     fc = nn.Sequential(
         nn.Flatten(),
         nn.Linear(in_channels, out_channels),
-        nn.ReLU(inplace=True)
+        nn.ReLU(inplace=False)#True)
     )
     return fc
 
@@ -86,6 +87,12 @@ class SurvivalNet(nn.Module):
         self.single_fusion = single_fusion()
 
     def forward(self, image):
+        # TODO: expand this out for N images, possibly like:
+        #   for image in images:
+        #       layer_1 = self.down_conv_1(image)
+        #       ... = ...
+        #   layer_11 = self.multiple_fusion(*images)
+        #   return layer_11
         layer_1 = self.down_conv_1(image)
         layer_2 = self.max_pool_2x2(layer_1)
         layer_3 = self.down_conv_2(layer_2)
@@ -97,44 +104,125 @@ class SurvivalNet(nn.Module):
         layer_9 = self.fc_1(layer_8)
         layer_10 = self.dropout(layer_9)
         layer_11 = self.single_fusion(layer_10)
+        return layer_11
+
+
+def load_split_train_test(test_split, batch_size, num_workers):
+    # Generate two datasets
+    all_data = SurvivalDataset(
+        transform=torchvision.transforms.Compose([Rescale(128), ToTensor()])
+    )
+    # Generate the random data indices
+    num_train = len(all_data)
+    indices = list(range(num_train))
+    split = int(np.floor(test_split * num_train))
+    np.random.shuffle(indices)
+    # Split the data using the random data indices
+    train_idx, test_idx = indices[split:], indices[:split]
+    train_sampler = SubsetRandomSampler(train_idx)
+    test_sampler = SubsetRandomSampler(test_idx)
+    # Create and return data loaders using the randomly split data
+    train_loader = DataLoader(all_data, sampler=train_sampler,
+                              batch_size=batch_size, num_workers=num_workers)
+    test_loader = DataLoader(all_data, sampler=test_sampler,
+                             batch_size=batch_size, num_workers=num_workers)
+    return train_loader, test_loader
+
+
+def training_loop(n_epochs, batch_size, learning_rate, optimizer, model,
+                  loss_fn, t_u_train, t_c_train):
+    total_losses = []
+    for epoch in range(1, n_epochs+1):
+        running_loss = 0
+        for i in range(len(t_u_train)):
+            t_p_train = model.forward(torch.tensor(np.expand_dims(t_u_train[i-1],axis=[0,1])).to(device))
+            loss_train = loss_fn(t_p_train, torch.tensor([t_c_train[i-1]]).to(device))
+            optimizer.zero_grad()
+            loss_train.backward()
+            optimizer.step()
+            running_loss += loss_train.item()
+            if (i == 0) and ((epoch == 1) or (epoch%1 == 0)):
+                total_losses.append(running_loss)
+                print(f'Epoch {epoch}, Training loss {running_loss:.4f}')
+    plt.plot(total_losses)
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss (Cross-Entropy)')
+    plt.title(f'Training Data: Learning Rate = {learning_rate}, Batch Size = {batch_size}')
+    plt.show()
 
 
 if __name__ == '__main__':
+    test_split = 0.25
+    learning_rate = 1e-6
+    epochs = 250
+    batch_size = 32
+    num_workers = 2
     image = torch.rand((1, 1, 128, 128))
     model = SurvivalNet()
     model.apply(weights_init)
+    model.to(torch.double)
     # summary(model, input_size=(1, 128, 128))
-    dataset = SurvivalDataset()
-    data_loader = DataLoader(dataset=dataset, batch_size=4, shuffle=True, num_workers=2)
-    data_iter = iter(data_loader)
-    images, labels = data_iter.next()
-    plt.imshow(torchvision.utils.make_grid(images))
-    print(' '.join(str(l) for l in labels))
+    torch.autograd.set_detect_anomaly(True)
 
-    # criterion = nn.CrossEntropyLoss()
-    # optimizer = optim.RMSprop(model.parameters())
+    train_loader, test_loader = load_split_train_test(test_split, batch_size, num_workers)
+    # print(f'train_loader: {len(train_loader)}')
+    # print(f'test_loader: {len(test_loader)}')
 
-    # trainloader = []
-    # for epoch in range(2):
-    #     running_loss = 0.0
-    #     for i, data in enumerate(trainloader, 0):
-    #         # get the inputs; data is a list of [inputs, labels]
-    #         inputs, labels = data
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.RMSprop(model.parameters(), lr=learning_rate)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
-    #         # zero the parameter gradients
+    t_u_train = train_loader.dataset.all_sagittal
+    t_c_train = train_loader.dataset.outcome
+    training_loop(epochs, batch_size, learning_rate, optimizer, model, criterion,
+                  t_u_train, t_c_train)
+
+    # epochs = 10
+    # steps = 0
+    # running_loss = 0
+    # train_losses, test_losses = [], []
+
+    # for epoch in range(1,epochs+1):
+    #     for p,a,c,s,o in train_loader:
+    #         # SurvivalDataset().plot_image(images=s,batch_size=batch_size)
+    #         steps += 1
+    #         inputs = s
+    #         labels = o
+    #         inputs, labels = inputs.to(device), labels.to(device)
     #         optimizer.zero_grad()
-
-    #         # forward + backward + optimize
-    #         outputs = model(inputs)
-    #         loss = criterion(outputs, labels)
-    #         loss.backward()
+    #         log_ps = model.forward(inputs)
+    #         # print(f'a,s,c: {criterion(model.forward(a),labels)}',\
+    #         #              f'{criterion(model.forward(s),labels)}',\
+    #         #              f'{criterion(model.forward(c),labels)}')
+    #         loss_train = criterion(log_ps, labels)
+    #         loss_train.backward()
     #         optimizer.step()
+    #         running_loss += loss_train.item()
 
-    #         # print statistics
-    #         running_loss += loss.item()
-    #         if i % 128 == 127:    # print every 128 mini-batches
-    #             print('[%d, %5d] loss: %.3f' %
-    #                 (epoch + 1, i + 1, running_loss / 128))
-    #             running_loss = 0.0
-
-    # print('Finished Training')
+    #         if steps % batch_size == 0:
+    #             print(f'Epoch {epoch}, Training loss {loss_train.item():.4f}')
+    #             # test_loss = 0
+    #             # accuracy = 0
+    #             # model.eval()
+    #             # with torch.no_grad():
+    #             #     for p,a,c,s,o in test_loader:
+    #             #         inputs = s
+    #             #         labels = o
+    #             #         inputs, labels = inputs.to(device), labels.to(device)
+    #             #         log_ps = model.forward(inputs)
+    #             #         batch_loss = criterion(log_ps, labels)
+    #             #         test_loss += batch_loss.item()
+    #             #         ps = torch.exp(log_ps)
+    #             #         top_p, top_class = ps.topk(1, dim=1)
+    #             #         equals = top_class == labels.view(*top_class.shape)
+    #             #         accuracy += torch.mean(equals.type(torch.FloatTensor)).item()
+    #             # train_losses.append(running_loss/len(train_loader))
+    #             # test_losses.append(test_loss/len(test_loader))                    
+    #             # print(f"Epoch {epoch}/{epochs}.. "
+    #             #       f"Train loss: {running_loss/batch_size:.3f}.. "
+    #             #       f"Test loss: {test_loss/len(test_loader):.3f}.. "
+    #             #       f"Test accuracy: {accuracy/len(test_loader):.3f}")
+    #             # running_loss = 0
+    #             # model.train()
+    # torch.save(model, 'three_view_model.pth')
