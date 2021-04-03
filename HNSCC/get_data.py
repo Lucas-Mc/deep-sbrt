@@ -1,5 +1,6 @@
 import os
 import math
+import random
 
 import numpy as np
 import pandas as pd
@@ -13,11 +14,22 @@ from torch.utils.data import Dataset, DataLoader
 
 
 class SurvivalDataset(Dataset):
-    def __init__(self, transform=None):
+    def __init__(self, subset, train_split, transform=None):
+        """
+        Parameters
+        ----------
+        subset : str
+            'train' or 'test'; splits data into even cohorts.
+        train_split : float
+            The proportion of total data allocated for training.
+            Range = [0,1].
+        transfrom : torchvision.transforms, optional
+            How to manipulate the data, if desired.
+        """
         # Load the data file
         self.treatment_data = pd.read_excel('Patient-and-Treatment-Characteristics.xls')
         # Convert TCIA codes to indices
-        self.all_patients = self.get_patients()
+        self.all_patients = self.get_patients(subset, train_split)
         self.num_patients = len(self.all_patients)
         self.patients = np.array(range(self.num_patients))
         # Set all the image file paths and image arrays
@@ -34,6 +46,10 @@ class SurvivalDataset(Dataset):
         Return the TCIA code of the patient, the axial scan, coronal scan,
         sagittal scan, and their outcome (Dead = 1, Alive = 0).
 
+        Parameters
+        ----------
+        index : int
+            The desired patient index.
         """
         out_data = (self.patients[index], self.all_axial[index],
                     self.all_coronal[index], self.all_sagittal[index],
@@ -48,12 +64,41 @@ class SurvivalDataset(Dataset):
         """
         return self.num_patients
 
-    def get_patients(self):
+    def get_patients(self, subset, train_split):
         """
+        Parameters
+        ----------
+        subset : str
+            'train' or 'test'; splits data into even cohorts.
+        train_split : float
+            The proportion of total data allocated for training.
+            Range = [0,1].
         """
+        # Get all the patients and split by their outcome
         valid_patients = [f for f in os.listdir('images') if f.startswith('HNSCC')]
         valid_patients.sort()
-        return valid_patients
+        all_outcomes = [self.patient_outcome(p) for p in valid_patients]
+        all_alive = [(i,o) for i,o in enumerate(all_outcomes) if o=='Alive']
+        all_dead = [(i,o) for i,o in enumerate(all_outcomes) if o=='Dead']
+        # Randomly shuffle both lists using the same seed for reproducibility
+        random.Random(4).shuffle(all_alive)
+        random.Random(4).shuffle(all_dead)
+        alive_split = int(np.floor(train_split * len(all_alive)))
+        dead_split = int(np.floor(train_split * len(all_dead)))
+        if subset == 'train':
+            all_alive = all_alive[:alive_split]
+            all_dead = all_dead[:dead_split]
+        elif subset == 'test':
+            all_alive = all_alive[alive_split:]
+            all_dead = all_dead[dead_split:]
+        else:
+            raise Exception('Invalid subset provided: Must be "train" or "test"')
+        # Combine the alive and dead data subsets, then randomly shuffle
+        combined_idx = [a[0] for a in all_alive]
+        combined_idx.extend([d[0] for d in all_dead])
+        combined_patients = [valid_patients[i] for i in combined_idx]
+        random.Random(1).shuffle(combined_patients)
+        return combined_patients
 
     def patient_outcome(self, patient):
         """

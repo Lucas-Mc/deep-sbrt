@@ -107,25 +107,17 @@ class SurvivalNet(nn.Module):
         return layer_11
 
 
-def load_split_train_test(test_split, batch_size, num_workers):
-    # Generate two datasets
-    all_data = SurvivalDataset(
-        transform=torchvision.transforms.Compose([Rescale(128), ToTensor()])
-    )
-    # Generate the random data indices
-    num_train = len(all_data)
-    indices = list(range(num_train))
-    split = int(np.floor(test_split * num_train))
-    np.random.shuffle(indices)
-    # Split the data using the random data indices
-    train_idx, test_idx = indices[split:], indices[:split]
-    train_sampler = SubsetRandomSampler(train_idx)
-    test_sampler = SubsetRandomSampler(test_idx)
-    # Create and return data loaders using the randomly split data
-    train_loader = DataLoader(all_data, sampler=train_sampler,
-                              batch_size=batch_size, num_workers=num_workers)
-    test_loader = DataLoader(all_data, sampler=test_sampler,
-                             batch_size=batch_size, num_workers=num_workers)
+def load_split_train_test(train_split, batch_size, num_workers):
+    # Generate the random test and train datasets
+    transform = torchvision.transforms.Compose([Rescale(128), ToTensor()])
+    train_data = SurvivalDataset('train', train_split, transform=transform)
+    test_data = SurvivalDataset('test', train_split, transform=transform)
+    # Turn the data into `DataLoader` objects with desired batch size and
+    # number of workers
+    train_loader = DataLoader(train_data, batch_size=batch_size,
+                              num_workers=num_workers)
+    test_loader = DataLoader(test_data, batch_size=batch_size,
+                             num_workers=num_workers)
     return train_loader, test_loader
 
 
@@ -152,7 +144,7 @@ def training_loop(n_epochs, batch_size, learning_rate, optimizer, model,
 
 
 if __name__ == '__main__':
-    test_split = 0.25
+    train_split = 0.75
     learning_rate = 1e-6
     epochs = 250
     batch_size = 32
@@ -164,7 +156,7 @@ if __name__ == '__main__':
     # summary(model, input_size=(1, 128, 128))
     torch.autograd.set_detect_anomaly(True)
 
-    train_loader, test_loader = load_split_train_test(test_split, batch_size, num_workers)
+    train_loader, test_loader = load_split_train_test(train_split, batch_size, num_workers)
     # print(f'train_loader: {len(train_loader)}')
     # print(f'test_loader: {len(test_loader)}')
 
