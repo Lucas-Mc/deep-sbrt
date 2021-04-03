@@ -122,32 +122,47 @@ def load_split_train_test(train_split, batch_size, num_workers):
 
 
 def training_loop(n_epochs, batch_size, learning_rate, optimizer, model,
-                  loss_fn, t_u_train, t_c_train):
-    total_losses = []
+                  loss_fn, t_u_train, t_c_train, t_u_test, t_c_test):
+    total_train_losses = []
+    total_test_losses = []
     for epoch in range(1, n_epochs+1):
-        running_loss = 0
+        train_loss = 0
         for i in range(len(t_u_train)):
             t_p_train = model.forward(torch.tensor(np.expand_dims(t_u_train[i-1],axis=[0,1])).to(device))
             loss_train = loss_fn(t_p_train, torch.tensor([t_c_train[i-1]]).to(device))
             optimizer.zero_grad()
             loss_train.backward()
             optimizer.step()
-            running_loss += loss_train.item()
+            train_loss += loss_train.item()
             if (i == 0) and ((epoch == 1) or (epoch%1 == 0)):
-                total_losses.append(running_loss)
-                print(f'Epoch {epoch}, Training loss {running_loss:.4f}')
-    plt.plot(total_losses)
+                total_train_losses.append(train_loss)
+                print(f'Epoch {epoch}, Training loss {train_loss:.4f}')
+                test_loss = 0
+                # TODO: implement accuracy
+                # accuracy = 0
+                model.eval()
+                with torch.no_grad():
+                    test_loss = 0
+                    for i in range(len(t_u_test)):
+                        t_p_test = model.forward(torch.tensor(np.expand_dims(t_u_test[i-1],axis=[0,1])).to(device))
+                        loss_test = loss_fn(t_p_test, torch.tensor([t_c_test[i-1]]).to(device))
+                        test_loss += loss_test.item()
+                    total_test_losses.append(test_loss/len(t_u_test))
+                    print(f'Epoch {epoch}, Test loss {test_loss/len(t_u_test):.4f}')
+    plt.plot(total_train_losses, label='Train Loss')
+    plt.plot(total_test_losses, label='Test Loss')
     plt.xlabel('Epoch')
     plt.ylabel('Loss (Cross-Entropy)')
     plt.title(f'Training Data: Learning Rate = {learning_rate}, Batch Size = {batch_size}')
+    plt.legend()
     plt.show()
 
 
 if __name__ == '__main__':
     train_split = 0.75
     learning_rate = 1e-6
-    epochs = 250
-    batch_size = 32
+    epochs = 10
+    batch_size = 2
     num_workers = 2
     image = torch.rand((1, 1, 128, 128))
     model = SurvivalNet()
@@ -157,9 +172,6 @@ if __name__ == '__main__':
     torch.autograd.set_detect_anomaly(True)
 
     train_loader, test_loader = load_split_train_test(train_split, batch_size, num_workers)
-    # print(f'train_loader: {len(train_loader)}')
-    # print(f'test_loader: {len(test_loader)}')
-
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.RMSprop(model.parameters(), lr=learning_rate)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -167,8 +179,10 @@ if __name__ == '__main__':
 
     t_u_train = train_loader.dataset.all_sagittal
     t_c_train = train_loader.dataset.outcome
+    t_u_test = test_loader.dataset.all_sagittal
+    t_c_test = test_loader.dataset.outcome
     training_loop(epochs, batch_size, learning_rate, optimizer, model, criterion,
-                  t_u_train, t_c_train)
+                  t_u_train, t_c_train, t_u_test, t_c_test)
 
     # epochs = 10
     # steps = 0
