@@ -31,6 +31,9 @@ def fc_layer(in_channels, out_channels):
     return fc
 
 def dropout_layer():
+    """
+    p = 0.5
+    """
     return nn.Dropout(p=0.5, inplace=True)
 
 def single_fusion():
@@ -125,32 +128,54 @@ def training_loop(n_epochs, batch_size, learning_rate, optimizer, model,
                   loss_fn, t_u_train, t_c_train, t_u_test, t_c_test):
     total_train_losses = []
     total_test_losses = []
+    total_train_accuracy = []
+    total_test_accuracy = []
+
     for epoch in range(1, n_epochs+1):
         train_loss = 0
+        train_accuracy = 0
+
         for i in range(len(t_u_train)):
-            t_p_train = model.forward(torch.tensor(np.expand_dims(t_u_train[i-1],axis=[0,1])).to(device))
-            loss_train = loss_fn(t_p_train, torch.tensor([t_c_train[i-1]]).to(device))
+            t_p_train = model.forward(torch.tensor(np.expand_dims(t_u_train[i],axis=[0,1])).to(device))
+            loss_train = loss_fn(t_p_train, torch.tensor([t_c_train[i]]).to(device))
             optimizer.zero_grad()
             loss_train.backward()
             optimizer.step()
             train_loss += loss_train.item()
-            if (i == 0) and ((epoch == 1) or (epoch%1 == 0)):
-                total_train_losses.append(train_loss)
-                print(f'Epoch {epoch}, Training loss {train_loss:.4f}')
+            pred_val = t_p_train.tolist()[0].index(max(t_p_train.tolist()[0]))
+            actual_val = t_c_train[i]
+            if pred_val == actual_val:
+                train_accuracy += 1
+
+            # Change the batch size here
+            if (i == len(t_u_train)-1) and ((epoch == 1) or (epoch%1 == 0)):
+                total_train_losses.append(train_loss/len(t_u_train))
+                total_train_accuracy.append(train_accuracy/len(t_u_train))
+                print(f'Epoch {epoch}, Training loss {train_loss/len(t_u_train):.4f}, Training accuracy {train_accuracy/len(t_u_train):4f}')
                 test_loss = 0
-                # TODO: implement accuracy
-                # accuracy = 0
                 model.eval()
+
                 with torch.no_grad():
                     test_loss = 0
+                    test_accuracy = 0
+
                     for i in range(len(t_u_test)):
-                        t_p_test = model.forward(torch.tensor(np.expand_dims(t_u_test[i-1],axis=[0,1])).to(device))
-                        loss_test = loss_fn(t_p_test, torch.tensor([t_c_test[i-1]]).to(device))
+                        t_p_test = model.forward(torch.tensor(np.expand_dims(t_u_test[i],axis=[0,1])).to(device))
+                        loss_test = loss_fn(t_p_test, torch.tensor([t_c_test[i]]).to(device))
                         test_loss += loss_test.item()
+                        pred_val = t_p_test.tolist()[0].index(max(t_p_test.tolist()[0]))
+                        actual_val = t_c_test[i]
+                        if pred_val == actual_val:
+                            test_accuracy += 1
+
                     total_test_losses.append(test_loss/len(t_u_test))
-                    print(f'Epoch {epoch}, Test loss {test_loss/len(t_u_test):.4f}')
+                    total_test_accuracy.append(test_accuracy/len(t_u_test))
+                    print(f'Epoch {epoch}, Test loss {test_loss/len(t_u_test):.4f}, Test Accuracy {test_accuracy/len(t_u_test):.4f}')
+
     plt.plot(total_train_losses, label='Train Loss')
     plt.plot(total_test_losses, label='Test Loss')
+    plt.plot(total_train_accuracy, label='Train Accuracy')
+    plt.plot(total_test_accuracy, label='Test Accuracy')
     plt.xlabel('Epoch')
     plt.ylabel('Loss (Cross-Entropy)')
     plt.title(f'Training Data: Learning Rate = {learning_rate}, Batch Size = {batch_size}')
@@ -161,8 +186,8 @@ def training_loop(n_epochs, batch_size, learning_rate, optimizer, model,
 if __name__ == '__main__':
     train_split = 0.75
     learning_rate = 1e-6
-    epochs = 10
-    batch_size = 2
+    epochs = 50
+    batch_size = 1
     num_workers = 2
     image = torch.rand((1, 1, 128, 128))
     model = SurvivalNet()
